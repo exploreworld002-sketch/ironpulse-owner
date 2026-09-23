@@ -1,0 +1,68 @@
+name: Build unsigned Windows installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    environment: windows-unsigned
+    env:
+      IRONPULSE_UNSIGNED_WINDOWS: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      IRONPULSE_LICENSE_PUBLIC_KEY_SHA256: ${{ vars.IRONPULSE_LICENSE_PUBLIC_KEY_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate owner-supplied production public key
+        env:
+          IRONPULSE_LICENSE_PUBLIC_KEY: ${{ vars.IRONPULSE_LICENSE_PUBLIC_KEY }}
+        run: node desktop/prepare-public-key.mjs
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:all
+      - run: pnpm typecheck
+      - run: node node_modules/electron/install.js
+      - run: pnpm desktop:prepare
+      - name: Package Windows x64 without signing
+        run: pnpm desktop:dist --win --x64
+      - name: Inspect actual app.asar, public key and Electron fuses
+        run: node desktop/audit-windows.mjs
+      - name: Verify unsigned status and prepare downloads
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = 'client-installers/Ironpulse-Setup-x64.exe'
+          $app = 'client-installers/win-unpacked/Ironpulse Gym Management.exe'
+          foreach ($file in @($installer, $app)) {
+            if (!(Test-Path $file)) { throw "Missing executable: $file" }
+            if ((Get-AuthenticodeSignature $file).Status -ne 'NotSigned') { throw "Unexpected signature state: $file" }
+          }
+          New-Item -ItemType Directory -Force windows-client | Out-Null
+          Copy-Item $installer windows-client/
+          Copy-Item client-handoff/INSTALLATION.md windows-client/
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Ironpulse-Setup-x64.exe" | Set-Content windows-client/SHA256SUMS.txt
+          Copy-Item docs/WINDOWS-ACCEPTANCE.md windows-release-evidence/
+          @{
+            commit = '${{ github.sha }}'
+            run = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            builtOn = (Get-CimInstance Win32_OperatingSystem).Caption
+            buildNumber = (Get-CimInstance Win32_OperatingSystem).BuildNumber
+            installerSHA256 = $hash
+            signatureStatus = 'NotSigned'
+            acceptanceStatus = 'NOT RUN - manual acceptance required'
+          } | ConvertTo-Json | Set-Content windows-release-evidence/build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ironpulse-windows-x64-unsigned
+          path: windows-client/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ironpulse-windows-owner-evidence
+          path: windows-release-evidence/
+          if-no-files-found: error

@@ -1,0 +1,27 @@
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      - gym_database:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file: server/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/ironpulse_local
+      APP_ORIGIN: http://localhost:3000
+      PORT: 3000
+      NODE_ENV: development
+    depends_on:
+      mongo:
+        condition: service_healthy
+volumes:
+  gym_database:

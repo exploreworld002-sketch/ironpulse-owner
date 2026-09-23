@@ -1,0 +1,54 @@
+name: Build signed desktop installers (owner only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    environment: desktop-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+            arch: x64
+          - os: macos-15-intel
+            target: mac
+            arch: x64
+          - os: macos-15
+            target: mac
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Supply public verification key (never the licensing private key)
+        shell: bash
+        env:
+          LICENSE_PUBLIC_KEY: ${{ vars.IRONPULSE_LICENSE_PUBLIC_KEY }}
+        run: |
+          node -e "const fs=require('fs');if(!process.env.LICENSE_PUBLIC_KEY)throw Error('Missing public key');fs.mkdirSync('owner-secrets',{recursive:true});fs.writeFileSync('owner-secrets/license-public.pem',process.env.LICENSE_PUBLIC_KEY)"
+      - run: pnpm test:all
+      - run: pnpm typecheck
+      - run: node node_modules/electron/install.js
+      - run: pnpm desktop:prepare
+      - name: Build signed native installer
+        env:
+          CSC_LINK: ${{ matrix.target == 'win' && secrets.WINDOWS_CSC_LINK || secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.target == 'win' && secrets.WINDOWS_CSC_KEY_PASSWORD || secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm exec electron-builder --config desktop/electron-builder.cjs --${{ matrix.target }} --${{ matrix.arch }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-installer-${{ matrix.target }}-${{ matrix.arch }}-requires-acceptance-test
+          path: |
+            client-installers/*.exe
+            client-installers/*.dmg
+          if-no-files-found: error

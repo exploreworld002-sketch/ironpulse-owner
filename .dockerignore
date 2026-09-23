@@ -1,0 +1,11 @@
+node_modules
+.git
+.openai
+.sites-runtime
+.wrangler
+.next
+dist
+standalone-dist
+server/.env
+*.zip
+*.tsbuildinfo
