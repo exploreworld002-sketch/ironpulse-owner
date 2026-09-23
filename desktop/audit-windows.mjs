@@ -11,7 +11,12 @@ const archive=path.join(folder,'resources/app.asar');
 const exe=path.join(folder,'Ironpulse Gym Management.exe');
 const expected=process.env.IRONPULSE_LICENSE_PUBLIC_KEY_SHA256;
 if(!expected)throw Error('Missing owner-confirmed public key fingerprint');
-if(existsSync(archive+'.unpacked'))throw Error('Unexpected unpacked application payload; audit required');
+if(existsSync(archive+'.unpacked')){
+  const {readdirSync}=await import('node:fs');
+  const walk=d=>readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);
+  console.error('UNPACKED FILES:\n'+walk(archive+'.unpacked').join('\n'));
+  throw Error('Unexpected unpacked application payload; audit required');
+}
 const entries=listPackage(archive);
 for(const name of entries){const entry=statFile(archive,name.replace(/^[/\\]/,''),false);if(entry.link||entry.unpacked)throw Error('Archive links/unpacked entries are not allowed: '+name)}
 const temporary=mkdtempSync(path.join(os.tmpdir(),'ironpulse-asar-audit-'));
